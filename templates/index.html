@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>College LAN Chat</title>
+    <meta charset="utf-8">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.0/socket.io.js"></script>
+    <style>
+        body { font-family: Arial, sans-serif; background: #f2f2f2; }
+        #chat { width: 80%; height: 400px; margin: 20px auto; padding: 10px; background: #fff; border: 1px solid #ccc; overflow-y: scroll; }
+        #controls { width: 80%; margin: 0 auto; display: flex; }
+        #message { flex: 1; padding: 10px; }
+        #sendBtn { padding: 10px 20px; }
+    </style>
+</head>
+<body>
+    <h2 style="text-align:center">College LAN Chat</h2>
+    <div id="chat"></div>
+    <div id="controls">
+        <input type="text" id="message" placeholder="Type message..." autocomplete="off">
+        <button id="sendBtn" onclick="sendMessage()">Send</button>
+    </div>
+    <script>
+        var socket = io();
+        var chat = document.getElementById('chat');
+        var messageBox = document.getElementById('message');
+
+        // Prompt for username on entry
+        var username = '';
+        while (!username) {
+            username = prompt("Enter your username:").trim();
+        }
+
+        // Show connection status
+        socket.on('connect', function() {
+            chat.innerHTML += "<div><em>Connected to server as <b>" + username + "</b></em></div>";
+        });
+
+        // Display incoming messages
+        socket.on('message', function(msg) {
+            chat.innerHTML += "<div>" + msg + "</div>";
+            chat.scrollTop = chat.scrollHeight; // auto-scroll
+        });
+
+        // Send message function
+        function sendMessage() {
+            var msg = messageBox.value.trim();
+            if (msg.length > 0) {
+                socket.send(username + ": " + msg);
+                messageBox.value = "";
+            }
+        }
+
+        // Allow Enter key to send message
+        messageBox.addEventListener("keyup", function(event) {
+            if (event.key === "Enter") sendMessage();
+        });
+    </script>
+</body>
+</html>
