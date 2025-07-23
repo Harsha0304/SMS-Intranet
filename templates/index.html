@@ -2,58 +2,232 @@
 <html>
 <head>
     <title>College LAN Chat</title>
-    <meta charset="utf-8">
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.0/socket.io.js"></script>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1">
     <style>
-        body { font-family: Arial, sans-serif; background: #f2f2f2; }
-        #chat { width: 80%; height: 400px; margin: 20px auto; padding: 10px; background: #fff; border: 1px solid #ccc; overflow-y: scroll; }
-        #controls { width: 80%; margin: 0 auto; display: flex; }
-        #message { flex: 1; padding: 10px; }
-        #sendBtn { padding: 10px 20px; }
+        body { font-family: Arial, sans-serif; background-color: #f9f9f9; }
+        #container { display: flex; width: 90%; margin: auto; margin-top: 20px; gap: 10px; }
+        #userPanel { width: 20%; background: #fff; padding: 10px; border: 1px solid #ccc; }
+        #chatPanel { width: 80%; background: #fff; padding: 10px; border: 1px solid #ccc; display: flex; flex-direction: column; }
+        #onlineUsers, #groups { margin-bottom: 20px; }
+        #chatWindow { flex-grow: 1; border: 1px solid #ccc; overflow-y: auto; padding: 10px; background: #eee; height: 380px; }
+        #messageForm { display: flex; margin-top: 10px; }
+        #messageInput { flex-grow: 1; padding: 8px; }
+        #sendBtn { padding: 8px 16px; }
+        .clickable { cursor: pointer; color: blue; text-decoration: underline; }
+        .selected { background-color: #d0e8ff; }
+        #chatTitle { font-weight: bold; margin-bottom: 10px; }
+        .role-badge { margin-left: 8px; padding: 1px 7px; font-size: 11px; border-radius: 6px; background: #e7e7e7; }
+        a.logout { float: right; font-size: 13px; color: #b00;}
+        .time { color: #aaa; font-size: 12px; margin-left: 10px; }
+        @media (max-width: 700px) {
+            #container { flex-direction: column; width:100%; }
+            #userPanel, #chatPanel { width:100%; }
+        }
     </style>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.0/socket.io.js"></script>
 </head>
 <body>
-    <h2 style="text-align:center">College LAN Chat</h2>
-    <div id="chat"></div>
-    <div id="controls">
-        <input type="text" id="message" placeholder="Type message..." autocomplete="off">
-        <button id="sendBtn" onclick="sendMessage()">Send</button>
+
+<h2 style="text-align:center;">College LAN Chat <span style="font-size:15px;color:#666;">({{ username }} - <span class="role-badge">{{ role }}</span>)</span>
+<a href="/logout" class="logout">Logout</a>
+</h2>
+
+<div id="container">
+    <div id="userPanel">
+        <div><b>Online Users</b></div>
+        <ul id="onlineUsers"></ul>
+
+        <div style="margin-top: 20px;"><b>Groups</b></div>
+        <ul id="groups">
+            {% for g in groups %}
+            <li class="groupItem clickable" data-group="{{g}}">{{g}}</li>
+            {% endfor %}
+        </ul>
+        {% if role == 'Admin' %}
+        <div style="margin-top: 25px">
+            <b>Add Group</b>
+            <input type="text" id="newGroupName" placeholder="Group Name" style="width:90%;">
+            <button onclick="addGroup();" style="width:90%;margin-top:5px;">Create Group</button>
+            <div id="groupMsg"></div>
+        </div>
+        {% endif %}
     </div>
-    <script>
-        var socket = io();
-        var chat = document.getElementById('chat');
-        var messageBox = document.getElementById('message');
 
-        // Prompt for username on entry
-        var username = '';
-        while (!username) {
-            username = prompt("Enter your username:").trim();
-        }
+    <div id="chatPanel">
+        <div id="chatTitle">Public Chat</div>
+        <div id="chatWindow"></div>
 
-        // Show connection status
-        socket.on('connect', function() {
-            chat.innerHTML += "<div><em>Connected to server as <b>" + username + "</b></em></div>";
-        });
+        <form id="messageForm" onsubmit="return sendMessage();">
+            <input id="messageInput" autocomplete="off" placeholder="Type message..." />
+            <button id="sendBtn">Send</button>
+        </form>
+    </div>
+</div>
 
-        // Display incoming messages
-        socket.on('message', function(msg) {
-            chat.innerHTML += "<div>" + msg + "</div>";
-            chat.scrollTop = chat.scrollHeight; // auto-scroll
-        });
-
-        // Send message function
-        function sendMessage() {
-            var msg = messageBox.value.trim();
-            if (msg.length > 0) {
-                socket.send(username + ": " + msg);
-                messageBox.value = "";
+<script>
+    // === Notification setup: always pop up for new messages ===
+    function requestNotifications() {
+        if ("Notification" in window) {
+            if (Notification.permission === "default") {
+                Notification.requestPermission();
             }
         }
+    }
+    requestNotifications();
 
-        // Allow Enter key to send message
-        messageBox.addEventListener("keyup", function(event) {
-            if (event.key === "Enter") sendMessage();
+    function showChatNotification(sender, msg) {
+        // Always notify (even if you're on chat)
+        if ("Notification" in window && Notification.permission === "granted") {
+            let n = new Notification("New message from " + sender, {
+                body: msg,
+                icon: "https://cdn-icons-png.flaticon.com/512/6073/6073873.png",
+                tag: "chat"
+            });
+            setTimeout(() => n.close(), 5000);
+        }
+    }
+
+    var username = "{{ username }}";
+    var role = "{{ role }}";
+    var socket = io();
+
+    var onlineUsersEl = document.getElementById('onlineUsers');
+    var chatWindow = document.getElementById('chatWindow');
+    var chatTitle = document.getElementById('chatTitle');
+    var messageInput = document.getElementById('messageInput');
+    var chatType = 'public';
+    var chatTarget = null;
+
+    function loadHistory(type, target) {
+        fetch(`/history/${type}/${target || ""}`)
+        .then(resp => resp.json())
+        .then(data => {
+            chatWindow.innerHTML = "";
+            data.messages.forEach(m => {
+                if(type === 'public')
+                    addChatMessage(`<b>${m.from}:</b> ${m.msg}<span class="time">${m.time}</span>`);
+                else if(type === 'private')
+                    addChatMessage(`<b>${m.from} (private):</b> ${m.msg}<span class="time">${m.time}</span>`);
+                else if(type === 'group')
+                    addChatMessage(`<b>${m.from} [${target}]:</b> ${m.msg}<span class="time">${m.time}</span>`);
+            });
+        })
+    }
+
+    socket.on('online_users', function(users) {
+        onlineUsersEl.innerHTML = '';
+        users.forEach(function(u) {
+            if(u.username !== username) {
+                let li = document.createElement('li');
+                li.textContent = u.username;
+                if (u.role) {
+                    li.innerHTML += ` <span class="role-badge">${u.role}</span>`;
+                }
+                li.classList.add('clickable');
+                li.onclick = () => selectChat('private', u.username);
+                onlineUsersEl.appendChild(li);
+            }
         });
-    </script>
+    });
+
+    socket.on('group_created', function(group) {
+        let groupsBox = document.getElementById('groups');
+        let li = document.createElement('li');
+        li.className = "groupItem clickable";
+        li.setAttribute("data-group", group);
+        li.innerText = group;
+        li.onclick = () => selectChat('group', group);
+        groupsBox.appendChild(li);
+    });
+
+    socket.on('message', function(msg) {
+        if(chatType === 'public') addChatMessage(msg);
+
+        // Notification for public chat not from self
+        let sender = msg.split(":")[0].trim();
+        let text = msg.substring(msg.indexOf(":")+1).trim();
+        if (sender !== username) {
+            showChatNotification(sender, text);
+        }
+    });
+
+    socket.on('private_message', function(data) {
+        if(chatType === 'private' && data.from === chatTarget) {
+            addChatMessage(`<b>${data.from} (private):</b> ${data.message}`);
+        } else {
+            addChatMessage(`<i>New private message from <b>${data.from}</b></i>`);
+        }
+        if (data.from !== username) {
+            showChatNotification(data.from, data.message);
+        }
+    });
+
+    socket.on('group_message', function(data) {
+        if(chatType === 'group' && data.group === chatTarget) {
+            addChatMessage(`<b>${data.from} [${data.group}]:</b> ${data.message}`);
+        }
+        if (data.from !== username) {
+            showChatNotification(`${data.from} [${data.group}]`, data.message);
+        }
+    });
+
+    socket.on('group_notification', function(msg) {
+        addChatMessage(`<em>${msg}</em>`);
+    });
+
+    socket.on('admin_response', function(msg) {
+        document.getElementById("groupMsg").innerHTML = `<span style="color:red">${msg}</span>`;
+        setTimeout(()=>{document.getElementById("groupMsg").innerHTML="";},2000)
+    });
+
+    function selectChat(type, target) {
+        chatType = type;
+        chatTarget = target;
+        document.querySelectorAll('#onlineUsers li, #groups li').forEach(el => {
+            el.classList.remove('selected');
+        });
+        if(type === 'private') {
+            [...onlineUsersEl.children].forEach(li => {
+                if(li.textContent.startsWith(target)) li.classList.add('selected');
+            });
+        } else if(type === 'group') {
+            document.querySelectorAll('.groupItem').forEach(el => {
+                if(el.getAttribute('data-group') === target) el.classList.add('selected');
+            });
+            socket.emit('join_group', {group: target});
+        } else {
+            chatTarget = null;
+        }
+        chatTitle.textContent = (type === 'public' ? 'Public Chat' : (type==='private' ? 'Chat with ' + target : 'Group: ' + target));
+        loadHistory(type, target);
+    }
+
+    function sendMessage() {
+        var msg = messageInput.value.trim();
+        if(msg.length === 0) return false;
+        if(chatType === 'public') {
+            socket.emit('send_message', {type: 'public', message: msg});
+        } else if(chatType === 'private') {
+            socket.emit('send_message', {type: 'private', to: chatTarget, message: msg});
+        } else if(chatType === 'group') {
+            socket.emit('send_message', {type: 'group', to: chatTarget, message: msg});
+        }
+        messageInput.value = '';
+        return false;
+    }
+    function addGroup() {
+        var group = document.getElementById('newGroupName').value.trim();
+        if(group.length === 0) return;
+        socket.emit('create_group', {group: group});
+        document.getElementById('newGroupName').value = '';
+    }
+    function addChatMessage(msg) {
+        chatWindow.innerHTML += `<div>${msg}</div>`;
+        chatWindow.scrollTop = chatWindow.scrollHeight;
+    }
+    selectChat('public', null);
+</script>
+
 </body>
 </html>
